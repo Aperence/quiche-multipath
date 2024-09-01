@@ -1,0 +1,11 @@
+[package]
+name = "quiche-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+env_logger = "0.11.5"
+log = "0.4.22"
+mio = { version = "1.0.2", features = ["net", "os-poll"] }
+quiche = "0.22.0"
+ring = "0.17.8"

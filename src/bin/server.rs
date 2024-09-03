@@ -9,9 +9,9 @@ use ring::rand::*;
 
 const MAX_BUF_SIZE: usize = 65507;
 
-struct Client{
+struct Client {
     conn: quiche::Connection,
-    id: u64
+    id: u64,
 }
 
 type ClientMap = HashMap<u64, Client>;
@@ -29,9 +29,10 @@ fn main() {
 
     // Create the UDP listening socket, and register it with the event loop.
     let mut sockets = vec![];
-    for i in 0..MAX_NUMBER_SOCKETS{
+    for i in 0..MAX_NUMBER_SOCKETS {
         let port = 8000 + i;
-        let mut socket = mio::net::UdpSocket::bind(format!("127.0.0.1:{port}").parse().unwrap()).unwrap();
+        let mut socket =
+            mio::net::UdpSocket::bind(format!("127.0.0.1:{port}").parse().unwrap()).unwrap();
         poll.registry()
             .register(&mut socket, mio::Token(i), mio::Interest::READABLE)
             .unwrap();
@@ -44,8 +45,12 @@ fn main() {
     let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
 
     config.set_application_protos(&[b"http/0.9"]).unwrap();
-    config.load_cert_chain_from_pem_file("src/bin/cert.crt").unwrap();
-    config.load_priv_key_from_pem_file("src/bin/cert.key").unwrap();
+    config
+        .load_cert_chain_from_pem_file("src/bin/cert.crt")
+        .unwrap();
+    config
+        .load_priv_key_from_pem_file("src/bin/cert.key")
+        .unwrap();
 
     config.set_initial_max_streams_bidi(100);
     config.set_initial_max_streams_uni(100);
@@ -72,15 +77,14 @@ fn main() {
     }
 
     let rng = SystemRandom::new();
-    let _ =
-        ring::hmac::Key::generate(ring::hmac::HMAC_SHA256, &rng).unwrap();
+    let _ = ring::hmac::Key::generate(ring::hmac::HMAC_SHA256, &rng).unwrap();
 
     let mut client_ids = ClientIDMap::new();
     let mut clients = ClientMap::new();
 
     let mut curr_id = 0;
 
-    loop{
+    loop {
         let timeout = clients.values().filter_map(|c| c.conn.timeout()).min();
 
         poll.poll(&mut events, timeout).unwrap();
@@ -94,7 +98,7 @@ fn main() {
                 break 'read;
             }
 
-            for event in &events{
+            for event in &events {
                 let socket = sockets.get(event.token().0).unwrap();
                 let local_addr = socket.local_addr().unwrap();
 
@@ -110,26 +114,22 @@ fn main() {
                         }
 
                         panic!("recv() failed: {:?}", e);
-                    },
+                    }
                 };
 
                 let pkt_buf = &mut buf[..len];
 
                 // Parse the QUIC packet's header.
-                let hdr = match quiche::Header::from_slice(
-                    pkt_buf,
-                    quiche::MAX_CONN_ID_LEN,
-                ) {
+                let hdr = match quiche::Header::from_slice(pkt_buf, quiche::MAX_CONN_ID_LEN) {
                     Ok(v) => v,
 
                     Err(e) => {
                         error!("Parsing packet header failed: {:?}", e);
                         continue 'read;
-                    },
+                    }
                 };
 
-                let client = if !client_ids.contains_key(&hdr.dcid)
-                {
+                let client = if !client_ids.contains_key(&hdr.dcid) {
                     if hdr.ty != quiche::Type::Initial {
                         error!("Packet is not Initial");
                         continue 'read;
@@ -142,14 +142,8 @@ fn main() {
                     debug!("New connection: dcid={:?} scid={:?}", hdr.dcid, scid);
 
                     #[allow(unused_mut)]
-                    let mut conn = quiche::accept(
-                        &scid,
-                        None,
-                        local_addr,
-                        from,
-                        &mut config,
-                    )
-                    .unwrap();
+                    let mut conn =
+                        quiche::accept(&scid, None, local_addr, from, &mut config).unwrap();
 
                     if let Some(keylog) = &mut keylog {
                         if let Ok(keylog) = keylog.try_clone() {
@@ -160,7 +154,7 @@ fn main() {
                     let id = curr_id;
 
                     client_ids.insert(scid.clone(), id);
-                    clients.insert(id, Client{conn, id});
+                    clients.insert(id, Client { conn, id });
                     curr_id += 1;
 
                     clients.get_mut(&id).unwrap()
@@ -181,7 +175,7 @@ fn main() {
                     Err(e) => {
                         error!("{} recv failed: {:?}", client.conn.trace_id(), e);
                         continue 'read;
-                    },
+                    }
                 };
 
                 info!("{} processed {} bytes", client.conn.trace_id(), read);
@@ -189,14 +183,20 @@ fn main() {
         }
 
         for client in clients.values_mut() {
-
             handle_path_events(client);
 
             for stream_id in client.conn.readable() {
                 // Stream is readable, read until there's no more data.
                 while let Ok((read, fin)) = client.conn.stream_recv(stream_id, &mut buf) {
-                    println!("Received {} on stream {}", std::str::from_utf8(&buf[..read]).unwrap(), stream_id);
-                    client.conn.stream_send(stream_id, &buf[..read], fin).unwrap();
+                    println!(
+                        "Received {} on stream {}",
+                        std::str::from_utf8(&buf[..read]).unwrap(),
+                        stream_id
+                    );
+                    client
+                        .conn
+                        .stream_send(stream_id, &buf[..read], fin)
+                        .unwrap();
                 }
             }
 
@@ -248,7 +248,7 @@ fn handle_path_events(client: &mut Client) {
                     .conn
                     .probe_path(local_addr, peer_addr)
                     .expect("cannot probe");
-            },
+            }
 
             quiche::PathEvent::Validated(local_addr, peer_addr) => {
                 info!(
@@ -257,7 +257,7 @@ fn handle_path_events(client: &mut Client) {
                     local_addr,
                     peer_addr
                 );
-            },
+            }
 
             quiche::PathEvent::FailedValidation(local_addr, peer_addr) => {
                 info!(
@@ -266,7 +266,7 @@ fn handle_path_events(client: &mut Client) {
                     local_addr,
                     peer_addr
                 );
-            },
+            }
 
             quiche::PathEvent::Closed(local_addr, peer_addr) => {
                 info!(
@@ -275,7 +275,7 @@ fn handle_path_events(client: &mut Client) {
                     local_addr,
                     peer_addr
                 );
-            },
+            }
 
             quiche::PathEvent::ReusedSourceConnectionId(cid_seq, old, new) => {
                 info!(
@@ -285,7 +285,7 @@ fn handle_path_events(client: &mut Client) {
                     old,
                     new
                 );
-            },
+            }
 
             quiche::PathEvent::PeerMigrated(local_addr, peer_addr) => {
                 info!(
@@ -294,7 +294,7 @@ fn handle_path_events(client: &mut Client) {
                     local_addr,
                     peer_addr
                 );
-            },
+            }
         }
     }
 }

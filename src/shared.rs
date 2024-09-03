@@ -3,7 +3,12 @@ use ring::rand::SecureRandom;
 
 pub const MAX_NUMBER_SOCKETS: usize = 20;
 
-pub fn read_loop(events: &mio::Events, conn: &mut quiche::Connection, socket: &mio::net::UdpSocket, buf: &mut [u8]){
+pub fn read_loop(
+    events: &mio::Events,
+    conn: &mut quiche::Connection,
+    socket: &mio::net::UdpSocket,
+    buf: &mut [u8],
+) {
     'read: loop {
         if events.is_empty() {
             trace!("timed out");
@@ -25,7 +30,7 @@ pub fn read_loop(events: &mio::Events, conn: &mut quiche::Connection, socket: &m
                 }
 
                 panic!("recv() failed: {:?}", e);
-            },
+            }
         };
 
         let pkt_buf = &mut buf[..len];
@@ -41,41 +46,42 @@ pub fn read_loop(events: &mio::Events, conn: &mut quiche::Connection, socket: &m
             Err(_) => {
                 // An error occurred, handle it.
                 break;
-            },
+            }
         };
 
         info!("{} processed {} bytes", conn.trace_id(), read);
     }
 }
 
-pub fn write_loop(conn: &mut quiche::Connection, sockets: &Vec<mio::net::UdpSocket>, out: &mut [u8]){
-    for i in (0..sockets.len()).rev(){
+pub fn write_loop(
+    conn: &mut quiche::Connection,
+    sockets: &[mio::net::UdpSocket],
+    out: &mut [u8],
+) {
+    for i in (0..sockets.len()).rev() {
         let socket = &sockets[i];
         let local_addr = socket.local_addr().unwrap();
         // loop on different paths
         for peer_addr in conn.paths_iter(local_addr) {
             loop {
-                let (write, send_info) = match conn.send_on_path(out, Some(local_addr), Some(peer_addr))
-                {
-                    Ok(v) => v,
+                let (write, send_info) =
+                    match conn.send_on_path(out, Some(local_addr), Some(peer_addr)) {
+                        Ok(v) => v,
 
-                    Err(quiche::Error::Done) => {
-                        trace!("{} done writing", conn.trace_id());
-                        break;
-                    },
+                        Err(quiche::Error::Done) => {
+                            trace!("{} done writing", conn.trace_id());
+                            break;
+                        }
 
-                    Err(e) => {
-                        error!("{} send failed: {:?}", conn.trace_id(), e);
+                        Err(e) => {
+                            error!("{} send failed: {:?}", conn.trace_id(), e);
 
-                        conn.close(false, 0x1, b"fail").ok();
-                        break;
-                    },
-                };
+                            conn.close(false, 0x1, b"fail").ok();
+                            break;
+                        }
+                    };
 
-                if let Err(e) = socket.send_to(
-                    &out[..write],
-                    send_info.to
-                ) {
+                if let Err(e) = socket.send_to(&out[..write], send_info.to) {
                     if e.kind() == std::io::ErrorKind::WouldBlock {
                         trace!("send() would block");
                         break;

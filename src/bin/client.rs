@@ -1,7 +1,9 @@
 use core::str;
 use std::{collections::HashMap, env};
 
-use quiche_test::shared::{generate_cid_and_reset_token, read_loop, write_loop, MAX_NUMBER_SOCKETS};
+use quiche_test::shared::{
+    generate_cid_and_reset_token, read_loop, write_loop, MAX_NUMBER_SOCKETS,
+};
 
 #[macro_use]
 extern crate log;
@@ -18,10 +20,7 @@ fn main() {
 
     let messages = &args[1..];
 
-    let mut received = vec![];
-    for _ in 0..messages.len(){
-        received.push(false);
-    }
+    let mut received = vec![false; messages.len()];
 
     let mut idx_message: u64 = 0;
 
@@ -39,9 +38,10 @@ fn main() {
     let mut probed = vec![];
     let mut probed_approved = vec![];
 
-    for i in 0..messages.len(){
+    for i in 0..messages.len() {
         let port = 9000 + i;
-        let mut socket = mio::net::UdpSocket::bind(format!("127.0.0.1:{port}").parse().unwrap()).unwrap();
+        let mut socket =
+            mio::net::UdpSocket::bind(format!("127.0.0.1:{port}").parse().unwrap()).unwrap();
         poll.registry()
             .register(&mut socket, mio::Token(i), mio::Interest::READABLE)
             .unwrap();
@@ -59,7 +59,6 @@ fn main() {
 
     config.set_application_protos(&[b"http/0.9"]).unwrap();
     config.verify_peer(false);
-    config.set_max_idle_timeout(100);
     config.set_initial_max_streams_bidi(100);
     config.set_initial_max_streams_uni(100);
 
@@ -85,8 +84,7 @@ fn main() {
     }
 
     let rng = SystemRandom::new();
-    let _ =
-        ring::hmac::Key::generate(ring::hmac::HMAC_SHA256, &rng).unwrap();
+    let _ = ring::hmac::Key::generate(ring::hmac::HMAC_SHA256, &rng).unwrap();
 
     let local = sockets[0].local_addr().unwrap();
 
@@ -95,20 +93,21 @@ fn main() {
     let scid = quiche::ConnectionId::from_vec(scid.to_vec());
 
     let mut peer_addrs = vec![];
-    for i in 0..20{
+    for i in 0..20 {
         let port = 8000 + i % MAX_NUMBER_SOCKETS;
         peer_addrs.push(format!("127.0.0.1:{port}").parse().unwrap())
     }
 
-    let mut conn =
-        quiche::connect(
-            Some("127.0.0.1:8000"),
-            &scid,
-            local,
-            peer_addrs[0],
-            &mut config).unwrap();
+    let mut conn = quiche::connect(
+        Some("127.0.0.1:8000"),
+        &scid,
+        local,
+        peer_addrs[0],
+        &mut config,
+    )
+    .unwrap();
 
-    if let Some(keylog) = keylog{
+    if let Some(keylog) = keylog {
         conn.set_keylog(Box::new(keylog));
     }
 
@@ -127,7 +126,7 @@ fn main() {
         return;
     }
 
-    loop{
+    loop {
         if conn.is_closed() {
             info!(
                 "connection closed, {:?} {:?}",
@@ -146,13 +145,13 @@ fn main() {
             conn.on_timeout();
         }
 
-        for event in &events{
+        for event in &events {
             let socket = sockets.get(event.token().0).unwrap();
 
-            read_loop(&events, &mut conn, &socket, &mut buf);
+            read_loop(&events, &mut conn, socket, &mut buf);
 
             // core of the client
-            if conn.is_established(){
+            if conn.is_established() {
                 while conn.scids_left() > 0 {
                     let (scid, reset_token) = generate_cid_and_reset_token(&rng);
 
@@ -161,29 +160,39 @@ fn main() {
                     }
                 }
 
-                if idx_message as usize == messages.len(){
-                    for stream_id in conn.readable(){
-                        while let Ok((read, fin)) = conn.stream_recv(stream_id, &mut buf) {
-                            let msg = str::from_utf8(&buf[..read]).unwrap();
-                            println!("Received '{}' from server on stream {}", msg, stream_id);
-                            if fin{
-                                received[(stream_id / 4) as usize] = true
-                            }
+                let idx_message_us = idx_message as usize;
+
+                for stream_id in conn.readable() {
+                    while let Ok((read, fin)) = conn.stream_recv(stream_id, &mut buf) {
+                        let msg = str::from_utf8(&buf[..read]).unwrap();
+                        println!("Received '{}' from server on stream {}", msg, stream_id);
+                        if fin {
+                            received[(stream_id / 4) as usize] = true
                         }
                     }
-                    if received.iter().all(|b| *b){
-                        conn.close(true, 0x00, b"closing").unwrap();
-                    }
-                }else if probed_approved[idx_message as usize]{
-                    // path is probed, send on this
-                    let message = messages.get(idx_message as usize).unwrap();
-                    conn.stream_send(idx_message * 4, message.as_bytes(), true).unwrap();
+                }
+                if received.iter().all(|b| *b) {
+                    conn.close(true, 0x00, b"closing").unwrap();
+                }
+
+                if probed
+                    .get(idx_message_us)
+                    .is_some_and(|already_probed| !already_probed)
+                    && conn.available_dcids() > 0
+                {
+                    // first probe a new path
+                    conn.probe_path(
+                        sockets[idx_message_us].local_addr().unwrap(),
+                        peer_addrs[idx_message_us],
+                    )
+                    .unwrap();
+                    probed[idx_message_us] = true;
+                } else if probed_approved.get(idx_message_us).is_some_and(|b| *b) {
+                    // path is validated, send on this new path
+                    let message = messages.get(idx_message_us).unwrap();
+                    conn.stream_send(idx_message * 4, message.as_bytes(), true)
+                        .unwrap();
                     idx_message += 1;
-                }else if !probed[idx_message as usize] && conn.available_dcids() > 0{
-                    // first probe
-                    let idx_message_us = idx_message as usize;
-                    conn.probe_path(sockets[idx_message_us].local_addr().unwrap(), peer_addrs[idx_message_us]).unwrap();
-                    probed[idx_message as usize] = true;
                 }
             }
 
@@ -192,38 +201,28 @@ fn main() {
                     quiche::PathEvent::New(..) => unreachable!(),
 
                     quiche::PathEvent::Validated(local_addr, peer_addr) => {
-                        info!(
-                            "Path ({}, {}) is now validated",
-                            local_addr, peer_addr
-                        );
+                        info!("Path ({}, {}) is now validated", local_addr, peer_addr);
                         probed_approved[idx_message as usize] = true;
                         conn.migrate(local_addr, peer_addr).unwrap();
-                    },
+                    }
 
                     quiche::PathEvent::FailedValidation(local_addr, peer_addr) => {
-                        info!(
-                            "Path ({}, {}) failed validation",
-                            local_addr, peer_addr
-                        );
-                    },
+                        info!("Path ({}, {}) failed validation", local_addr, peer_addr);
+                    }
 
                     quiche::PathEvent::Closed(local_addr, peer_addr) => {
                         info!(
                             "Path ({}, {}) is now closed and unusable",
                             local_addr, peer_addr
                         );
-                    },
+                    }
 
-                    quiche::PathEvent::ReusedSourceConnectionId(
-                        cid_seq,
-                        old,
-                        new,
-                    ) => {
+                    quiche::PathEvent::ReusedSourceConnectionId(cid_seq, old, new) => {
                         info!(
                             "Peer reused cid seq {} (initially {:?}) on {:?}",
                             cid_seq, old, new
                         );
-                    },
+                    }
 
                     quiche::PathEvent::PeerMigrated(..) => unreachable!(),
                 }

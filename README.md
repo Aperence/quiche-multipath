@@ -31,4 +31,4 @@ $ cargo run --bin client -- Message1 Message2 ... MessageN
 ## How it works
 
 The client will request for each different message the creation of a new path
-using the `conn.probe_path` method. Once this path is validated by the server, we migrate the connection to use this new path using `conn.migrate`, and then we send the message on a new stream using the `conn.stream_send` method. Note that in order to work, we also must supply enough CID for these new paths, which can be done using the `conn.new_scid` method.
+using the `conn.probe_path` method. Once this path is validated by the server, we migrate the connection to use this new path using `conn.migrate`, and then we send the message on a new stream using the `conn.stream_send` method. Note that in order to work, we must also supply enough CIDs for these new paths, which can be done using the `conn.new_scid` method.

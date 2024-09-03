@@ -4,11 +4,10 @@ use std::collections::HashMap;
 extern crate log;
 
 use quiche::{self, ConnectionId};
-use quiche_test::shared::{generate_cid_and_reset_token, write_loop};
+use quiche_test::shared::{generate_cid_and_reset_token, write_loop, MAX_NUMBER_SOCKETS};
 use ring::rand::*;
 
 const MAX_BUF_SIZE: usize = 65507;
-const MAX_NUMBER_SOCKETS: usize = 20;
 
 struct Client{
     conn: quiche::Connection,
@@ -82,7 +81,9 @@ fn main() {
     let mut curr_id = 0;
 
     loop{
-        poll.poll(&mut events, None).unwrap();
+        let timeout = clients.values().filter_map(|c| c.conn.timeout()).min();
+
+        poll.poll(&mut events, timeout).unwrap();
 
         'read: loop {
             if events.is_empty() {
@@ -193,9 +194,9 @@ fn main() {
 
             for stream_id in client.conn.readable() {
                 // Stream is readable, read until there's no more data.
-                while let Ok((read, _)) = client.conn.stream_recv(stream_id, &mut buf) {
+                while let Ok((read, fin)) = client.conn.stream_recv(stream_id, &mut buf) {
                     println!("Received {} on stream {}", std::str::from_utf8(&buf[..read]).unwrap(), stream_id);
-                    client.conn.stream_send(stream_id, &buf[..read], true).unwrap();
+                    client.conn.stream_send(stream_id, &buf[..read], fin).unwrap();
                 }
             }
 
@@ -216,6 +217,8 @@ fn main() {
             trace!("Collecting garbage");
 
             if c.conn.is_closed() {
+                println!("Closing connection to {}", c.conn.trace_id());
+
                 info!(
                     "{} connection collected {:?} {:?}",
                     c.conn.trace_id(),

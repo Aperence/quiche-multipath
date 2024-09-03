@@ -1,6 +1,8 @@
 use log::{error, info, trace};
 use ring::rand::SecureRandom;
 
+pub const MAX_NUMBER_SOCKETS: usize = 20;
+
 pub fn read_loop(events: &mio::Events, conn: &mut quiche::Connection, socket: &mio::net::UdpSocket, buf: &mut [u8]){
     'read: loop {
         if events.is_empty() {

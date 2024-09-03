@@ -1,7 +1,7 @@
 use core::str;
 use std::{collections::HashMap, env};
 
-use quiche_test::shared::{generate_cid_and_reset_token, read_loop, write_loop};
+use quiche_test::shared::{generate_cid_and_reset_token, read_loop, write_loop, MAX_NUMBER_SOCKETS};
 
 #[macro_use]
 extern crate log;
@@ -96,7 +96,7 @@ fn main() {
 
     let mut peer_addrs = vec![];
     for i in 0..20{
-        let port = 8000 + i;
+        let port = 8000 + i % MAX_NUMBER_SOCKETS;
         peer_addrs.push(format!("127.0.0.1:{port}").parse().unwrap())
     }
 
@@ -128,7 +128,23 @@ fn main() {
     }
 
     loop{
+        if conn.is_closed() {
+            info!(
+                "connection closed, {:?} {:?}",
+                conn.stats(),
+                conn.path_stats().collect::<Vec<quiche::PathStats>>()
+            );
+
+            return;
+        }
+
         poll.poll(&mut events, conn.timeout()).unwrap();
+
+        if events.is_empty() {
+            trace!("timed out");
+
+            conn.on_timeout();
+        }
 
         for event in &events{
             let socket = sockets.get(event.token().0).unwrap();
@@ -156,7 +172,7 @@ fn main() {
                         }
                     }
                     if received.iter().all(|b| *b){
-                        return;
+                        conn.close(true, 0x00, b"closing").unwrap();
                     }
                 }else if probed_approved[idx_message as usize]{
                     // path is probed, send on this

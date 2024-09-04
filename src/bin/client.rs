@@ -1,5 +1,5 @@
 use core::str;
-use std::{collections::HashMap, env};
+use std::{collections::HashMap, env, net::SocketAddr};
 
 use quiche_test::shared::{
     generate_cid_and_reset_token, read_loop, write_loop, MAX_NUMBER_SOCKETS,
@@ -35,8 +35,6 @@ fn main() {
 
     // Create the UDP listening socket, and register it with the event loop.
     let mut sockets = vec![];
-    let mut probed = vec![];
-    let mut probed_approved = vec![];
 
     for i in 0..messages.len() {
         let port = 9000 + i;
@@ -47,12 +45,9 @@ fn main() {
             .unwrap();
 
         sockets.push(socket);
-        probed.push(false);
-        probed_approved.push(false);
     }
 
-    probed[0] = true;
-    probed_approved[0] = true;
+    let local_addrs: Vec<SocketAddr> = sockets.iter().map(|s| s.local_addr().unwrap()).collect();
 
     // Create the configuration for the QUIC connections.
     let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
@@ -160,8 +155,6 @@ fn main() {
                     }
                 }
 
-                let idx_message_us = idx_message as usize;
-
                 for stream_id in conn.readable() {
                     while let Ok((read, fin)) = conn.stream_recv(stream_id, &mut buf) {
                         let msg = str::from_utf8(&buf[..read]).unwrap();
@@ -175,25 +168,13 @@ fn main() {
                     conn.close(true, 0x00, b"closing").unwrap();
                 }
 
-                if probed
-                    .get(idx_message_us)
-                    .is_some_and(|already_probed| !already_probed)
-                    && conn.available_dcids() > 0
-                {
-                    // first probe a new path
-                    conn.probe_path(
-                        sockets[idx_message_us].local_addr().unwrap(),
-                        peer_addrs[idx_message_us],
-                    )
-                    .unwrap();
-                    probed[idx_message_us] = true;
-                } else if probed_approved.get(idx_message_us).is_some_and(|b| *b) {
-                    // path is validated, send on this new path
-                    let message = messages.get(idx_message_us).unwrap();
-                    conn.stream_send(idx_message * 4, message.as_bytes(), true)
-                        .unwrap();
-                    idx_message += 1;
-                }
+                send_stream_new_path(
+                    &mut conn,
+                    &local_addrs,
+                    &peer_addrs,
+                    messages,
+                    &mut idx_message,
+                );
             }
 
             while let Some(qe) = conn.path_event_next() {
@@ -202,7 +183,6 @@ fn main() {
 
                     quiche::PathEvent::Validated(local_addr, peer_addr) => {
                         info!("Path ({}, {}) is now validated", local_addr, peer_addr);
-                        probed_approved[idx_message as usize] = true;
                         conn.migrate(local_addr, peer_addr).unwrap();
                     }
 
@@ -231,5 +211,31 @@ fn main() {
             // write function
             write_loop(&mut conn, &sockets, &mut out);
         }
+    }
+}
+
+fn send_stream_new_path(
+    conn: &mut quiche::Connection,
+    local_addrs: &Vec<SocketAddr>,
+    peer_addrs: &Vec<SocketAddr>,
+    messages: &[String],
+    idx_message: &mut u64,
+) {
+    let idx_message_us = *idx_message as usize;
+    if idx_message_us >= messages.len() {
+        return;
+    }
+    let local_addr = local_addrs[idx_message_us];
+    let peer_addr = peer_addrs[idx_message_us];
+    let path_validated = conn.is_path_validated(local_addr, peer_addr);
+    if path_validated.is_err() && conn.available_dcids() > 0 {
+        // path doesn't exist, first probe it
+        conn.probe_path(local_addr, peer_addr).unwrap();
+    } else if path_validated.is_ok_and(|validated| validated) {
+        // path is validated, send on this new path
+        let message = messages.get(idx_message_us).unwrap();
+        conn.stream_send(*idx_message * 4, message.as_bytes(), true)
+            .unwrap();
+        *idx_message += 1;
     }
 }

@@ -53,11 +53,7 @@ pub fn read_loop(
     }
 }
 
-pub fn write_loop(
-    conn: &mut quiche::Connection,
-    sockets: &[mio::net::UdpSocket],
-    out: &mut [u8],
-) {
+pub fn write_loop(conn: &mut quiche::Connection, sockets: &[mio::net::UdpSocket], out: &mut [u8]) {
     for i in (0..sockets.len()).rev() {
         let socket = &sockets[i];
         let local_addr = socket.local_addr().unwrap();
